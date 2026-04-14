@@ -3,26 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Global Development</title>
+  <title>Global Development — Interne</title>
   <link rel="stylesheet" href="./style.css" />
-  <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+  <script src="https://unpkg.com/deck.gl@9.0.35/dist.min.js"></script>
 </head>
 <body>
   <div id="stars-container"></div>
-  <div id="globe-halo"></div>
 
   <div id="container">
-    <canvas id="halo-canvas" style="position:absolute;top:0;left:0;pointer-events:none;z-index:1;"></canvas>
+    <canvas id="halo-canvas"></canvas>
 
     <div id="ui-top-left" class="panel">
       <div class="header-block">
         <div class="title-main">GLOBAL DEVELOPMENT</div>
-        <div class="title-sub">Répartition géographique des projets</div>
+        <div class="title-sub">Carte interne — exploration multi-filtres des projets du groupe</div>
       </div>
+
       <div id="ui-stats">
         <div class="stat">
           <div class="stat-value" id="stat-projects">–</div>
-          <div class="stat-label">Projets</div>
+          <div class="stat-label">Lignes / projets</div>
         </div>
         <div class="stat">
           <div class="stat-value" id="stat-countries">–</div>
@@ -42,18 +42,70 @@
         <button id="btnAmount" class="seg-btn">Montant cumulé</button>
       </div>
 
-      <div class="controls-title funding-title">Filtrer par</div>
-      <select id="filterTypeSelect">
-        <option value="none">— Aucun filtre —</option>
-        <option value="funder">Bailleur</option>
-        <option value="responsible">Responsable</option>
-        <option value="filiale">Filiale</option>
-        <option value="sector">Secteur</option>
-        <option value="expert">Expert</option>
-        <option value="amount">Montant</option>
-      </select>
+      <div class="controls-title filters-title">Filtres cumulables</div>
 
-      <div id="filterValueWrapper" style="margin-top:10px; display:none;"></div>
+      <div class="filter-block">
+        <label class="filter-label" for="filterFunder">Bailleur</label>
+        <select id="filterFunder">
+          <option value="ALL">Tous les bailleurs</option>
+        </select>
+      </div>
+
+      <div class="filter-block">
+        <label class="filter-label" for="filterResponsible">Responsable</label>
+        <select id="filterResponsible">
+          <option value="ALL">Tous les responsables</option>
+        </select>
+      </div>
+
+      <div class="filter-block">
+        <label class="filter-label" for="filterFiliale">Filiale</label>
+        <select id="filterFiliale">
+          <option value="ALL">Toutes les filiales</option>
+        </select>
+      </div>
+
+      <div class="filter-block">
+        <label class="filter-label" for="filterSector">Secteur</label>
+        <select id="filterSector">
+          <option value="ALL">Tous les secteurs</option>
+        </select>
+      </div>
+
+      <div class="filter-block">
+        <label class="filter-label" for="filterExpert">Expert</label>
+        <select id="filterExpert">
+          <option value="ALL">Tous les experts</option>
+        </select>
+      </div>
+
+      <div class="filter-block">
+        <label class="filter-label" for="amountSlider">Montant minimum</label>
+        <div class="amount-slider-wrapper">
+          <div class="amount-slider-label">
+            <span>0 EUR</span>
+            <span>5 M EUR</span>
+          </div>
+          <input
+            type="range"
+            id="amountSlider"
+            min="0"
+            max="5000000"
+            step="50000"
+            value="0"
+          />
+          <div class="amount-slider-value" id="amountSliderLabel">≥ 0 EUR</div>
+        </div>
+      </div>
+
+      <div class="filter-actions">
+        <button id="btnResetFilters" class="seg-btn secondary-btn">Réinitialiser les filtres</button>
+      </div>
+    </div>
+
+    <div id="ui-active-filters" class="panel">
+      <div class="legend-title">Filtres actifs</div>
+      <div id="activeFiltersContent" class="active-filters-content">Aucun filtre</div>
     </div>
 
     <div id="ui-legend" class="panel">
@@ -66,12 +118,12 @@
       <button id="btnExport" class="seg-btn active" style="width:100%; margin-top:4px;">
         Exporter en PNG
       </button>
-      <div id="exportStatus" style="font-size:11px; opacity:0.7; margin-top:8px; display:none;"></div>
+      <div id="exportStatus"></div>
     </div>
 
     <div id="tooltip"></div>
   </div>
 
-  <script src="./script.js"></script>
+  <script src="./script.js?v=1"></script>
 </body>
 </html>
