@@ -42,11 +42,19 @@ canvas {
   pointer-events: auto;
 }
 
+#halo-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
 .panel {
   position: absolute;
   z-index: 50;
   pointer-events: auto;
-  background: rgba(7, 18, 34, 0.74);
+  background: rgba(7, 18, 34, 0.82);
   border: 1px solid rgba(170, 210, 245, 0.16);
   border-radius: 14px;
   backdrop-filter: blur(10px);
@@ -54,12 +62,12 @@ canvas {
   color: #f4f8fc;
 }
 
-#ui-top-left, #ui-top-right, #ui-legend {
+#ui-top-left,
+#ui-top-right,
+#ui-legend,
+#ui-export,
+#ui-active-filters {
   z-index: 60;
-}
-
-#ui-top-right, #ui-top-right * {
-  pointer-events: auto;
 }
 
 #ui-top-left {
@@ -84,7 +92,7 @@ canvas {
 .title-sub {
   margin-top: 4px;
   font-size: 12px;
-  opacity: 0.8;
+  opacity: 0.82;
 }
 
 #ui-stats {
@@ -113,14 +121,19 @@ canvas {
   top: 22px;
   right: 24px;
   padding: 14px;
-  min-width: 250px;
-  max-width: 300px;
+  width: 300px;
+  max-height: calc(100vh - 44px);
+  overflow-y: auto;
 }
 
 .controls-title {
   font-size: 11px;
   opacity: 0.75;
   margin-bottom: 10px;
+}
+
+.filters-title {
+  margin-top: 16px;
 }
 
 .segmented {
@@ -159,13 +172,26 @@ canvas {
     0 6px 16px rgba(28, 88, 150, 0.18);
 }
 
-.funding-title {
-  margin-top: 14px;
-  margin-bottom: 8px;
+.secondary-btn {
+  background: rgba(255,255,255,0.04);
 }
 
-#filterTypeSelect,
-#filterValueSelect {
+.filter-block {
+  margin-top: 10px;
+}
+
+.filter-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+#filterFunder,
+#filterResponsible,
+#filterFiliale,
+#filterSector,
+#filterExpert {
   width: 100%;
   appearance: none;
   border: 1px solid rgba(170, 210, 245, 0.12);
@@ -180,19 +206,28 @@ canvas {
   box-sizing: border-box;
 }
 
-#filterTypeSelect:hover,
-#filterValueSelect:hover {
+#filterFunder:hover,
+#filterResponsible:hover,
+#filterFiliale:hover,
+#filterSector:hover,
+#filterExpert:hover {
   background: rgba(255, 255, 255, 0.07);
 }
 
-#filterTypeSelect:focus,
-#filterValueSelect:focus {
+#filterFunder:focus,
+#filterResponsible:focus,
+#filterFiliale:focus,
+#filterSector:focus,
+#filterExpert:focus {
   border-color: rgba(120, 185, 245, 0.35);
   box-shadow: 0 0 0 3px rgba(120, 185, 245, 0.08);
 }
 
-#filterTypeSelect option,
-#filterValueSelect option {
+#filterFunder option,
+#filterResponsible option,
+#filterFiliale option,
+#filterSector option,
+#filterExpert option {
   background: #0d1a2a;
   color: #f4f8fc;
 }
@@ -221,6 +256,34 @@ canvas {
   font-weight: 700;
   color: #ffffff;
   text-align: center;
+}
+
+.filter-actions {
+  margin-top: 14px;
+}
+
+#ui-active-filters {
+  top: 184px;
+  left: 24px;
+  padding: 13px;
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.active-filters-content {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #e9f4ff;
+}
+
+.filter-chip {
+  display: inline-block;
+  margin: 0 6px 6px 0;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(95, 169, 238, 0.16);
+  border: 1px solid rgba(120, 185, 245, 0.18);
+  font-size: 11px;
 }
 
 #ui-legend {
@@ -259,6 +322,13 @@ canvas {
   min-width: 160px;
 }
 
+#exportStatus {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 8px;
+  display: none;
+}
+
 #tooltip {
   position: fixed;
   pointer-events: none;
@@ -273,21 +343,6 @@ canvas {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
   display: none;
   min-width: 195px;
-}
-
-#globe-halo {
-  position: absolute;
-  z-index: 1;
-  pointer-events: none;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  left: 50%;
-  top: 50%;
-  box-shadow:
-    0 0 15px 8px rgba(120, 190, 255, 0.35),
-    0 0 35px 18px rgba(80, 150, 230, 0.20),
-    0 0 0px 2px rgba(140, 200, 255, 0.50);
-  transition: width 0.1s, height 0.1s;
 }
 
 #stars-container {
