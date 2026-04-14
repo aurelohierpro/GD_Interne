@@ -1,13 +1,14 @@
 const { Deck, GeoJsonLayer, ScatterplotLayer, _GlobeView } = deck;
 
-const DATA_URL = "./countries2.geojson";
-const PROJECTS_URL = "./projects_site.json";
+const DATA_URL = "./countries_internal.geojson?v=1";
+const PROJECTS_URL = "./projects_internal.json?v=1";
 
 let mode = "projects";
 let hoveredName = null;
 let deckgl = null;
 let autoRotate = true;
 let resumeRotateTimeout = null;
+let amountSliderTimer = null;
 
 let currentViewState = {
   longitude: -12,
@@ -15,21 +16,19 @@ let currentViewState = {
   zoom: 0.92
 };
 
-let filterType = "none";
-let filterValue = "ALL";
-let filterMinAmount = 0;
-
 let geoFeatures = [];
+let countriesFeatureCollection = null;
 let projectsData = null;
 let projectsRows = [];
 let amountBreaks = [0, 0, 0, 0, 0];
 
-const FILTER_LABELS = {
-  funder: "Tous les bailleurs",
-  responsible: "Tous les responsables",
-  filiale: "Toutes les filiales",
-  sector: "Tous les secteurs",
-  expert: "Tous les experts"
+let activeFilters = {
+  funder: "ALL",
+  responsible: "ALL",
+  filiale: "ALL",
+  sector: "ALL",
+  expert: "ALL",
+  minAmount: 0
 };
 
 const OFFICE_LOCATIONS = [
@@ -38,8 +37,6 @@ const OFFICE_LOCATIONS = [
   { name: "Yaoundé", coordinates: [11.5021, 3.8480] },
   { name: "Bogota", coordinates: [-74.0721, 4.7110] }
 ];
-
-let pulsePhase = 2;
 
 const PALETTE_BLUE = {
   project: [
@@ -99,12 +96,10 @@ const PALETTE_GREEN = {
 };
 
 function getActivePalette() {
-  if (filterType === "filiale" && filterValue === "Leader: Urbaconsulting") return PALETTE_ORANGE;
-  if (filterType === "filiale" && filterValue === "Leader: Nexsom") return PALETTE_GREEN;
+  if (activeFilters.filiale === "Leader: Urbaconsulting") return PALETTE_ORANGE;
+  if (activeFilters.filiale === "Leader: Nexsom") return PALETTE_GREEN;
   return PALETTE_BLUE;
 }
-
-// ─── Formatters ───────────────────────────────────────────────────────────────
 
 function numberFmt(n) {
   return Number(n || 0).toLocaleString("fr-FR");
@@ -118,8 +113,6 @@ function amountShort(n) {
   return numberFmt(v) + " EUR";
 }
 
-// ─── Helpers projets ──────────────────────────────────────────────────────────
-
 function getFilterOptions(type) {
   if (!projectsData?.filters_metadata) return [];
 
@@ -132,32 +125,62 @@ function getFilterOptions(type) {
   return [];
 }
 
+function populateSelect(selectId, items, allLabel) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+
+  select.innerHTML = "";
+  const allOpt = document.createElement("option");
+  allOpt.value = "ALL";
+  allOpt.textContent = allLabel;
+  select.appendChild(allOpt);
+
+  items.forEach(item => {
+    const opt = document.createElement("option");
+    opt.value = item.name;
+    opt.textContent = `${item.name} (${item.count_rows})`;
+    select.appendChild(opt);
+  });
+}
+
+function populateFilterUI() {
+  populateSelect("filterFunder", getFilterOptions("funder"), "Tous les bailleurs");
+  populateSelect("filterResponsible", getFilterOptions("responsible"), "Tous les responsables");
+  populateSelect("filterFiliale", getFilterOptions("filiale"), "Toutes les filiales");
+  populateSelect("filterSector", getFilterOptions("sector"), "Tous les secteurs");
+  populateSelect("filterExpert", getFilterOptions("expert"), "Tous les experts");
+}
+
 function getFilteredProjects() {
   return projectsRows.filter(project => {
-    if (filterType === "none") return true;
+    const amount = Number(project.amount || 0);
 
-    if (filterType === "amount") {
-      return Number(project.amount || 0) >= filterMinAmount;
+    if (activeFilters.minAmount > 0 && amount < activeFilters.minAmount) {
+      return false;
     }
 
-    if (filterType === "funder") {
-      return filterValue === "ALL" || (project.funder || "") === filterValue;
+    if (activeFilters.funder !== "ALL" && project.funder !== activeFilters.funder) {
+      return false;
     }
 
-    if (filterType === "responsible") {
-      return filterValue === "ALL" || (project.responsible || "") === filterValue;
+    if (activeFilters.responsible !== "ALL" && project.responsible !== activeFilters.responsible) {
+      return false;
     }
 
-    if (filterType === "filiale") {
-      return filterValue === "ALL" || (project.filiale || "") === filterValue;
+    if (activeFilters.filiale !== "ALL" && project.filiale !== activeFilters.filiale) {
+      return false;
     }
 
-    if (filterType === "sector") {
-      return filterValue === "ALL" || (project.sectors || []).includes(filterValue);
+    if (activeFilters.sector !== "ALL") {
+      if (!Array.isArray(project.sectors) || !project.sectors.includes(activeFilters.sector)) {
+        return false;
+      }
     }
 
-    if (filterType === "expert") {
-      return filterValue === "ALL" || (project.experts || []).includes(filterValue);
+    if (activeFilters.expert !== "ALL") {
+      if (!Array.isArray(project.experts) || !project.experts.includes(activeFilters.expert)) {
+        return false;
+      }
     }
 
     return true;
@@ -167,115 +190,26 @@ function getFilteredProjects() {
 function buildCountryStatsFromProjects(projects) {
   const stats = {};
 
-  projects.forEach(project => {
+  for (const project of projects) {
     const countryKeys = Array.isArray(project.country_keys) ? project.country_keys : [];
     const amount = Number(project.amount || 0);
 
-    if (!countryKeys.length) return;
+    if (!countryKeys.length) continue;
 
     const amountPerCountry = amount / countryKeys.length;
 
-    countryKeys.forEach(key => {
+    for (const key of countryKeys) {
       if (!stats[key]) {
         stats[key] = { nb_projets: 0, somme_argent: 0 };
       }
 
       stats[key].nb_projets += 1;
       stats[key].somme_argent += amountPerCountry;
-    });
-  });
+    }
+  }
 
   return stats;
 }
-
-// ─── Dynamic filter UI ────────────────────────────────────────────────────────
-
-function buildFilterValueUI() {
-  const wrapper = document.getElementById("filterValueWrapper");
-  if (!wrapper) return;
-
-  if (filterType === "none") {
-    wrapper.style.display = "none";
-    wrapper.innerHTML = "";
-    return;
-  }
-
-  wrapper.style.display = "block";
-
-  if (filterType === "amount") {
-  const maxAmt = 5000000;
-  const stepAmt = 50000;
-
-  if (filterMinAmount > maxAmt) filterMinAmount = maxAmt;
-
-  wrapper.innerHTML = `
-    <div class="amount-slider-wrapper">
-      <div class="amount-slider-label">
-        <span>0 EUR</span>
-        <span>5 M EUR</span>
-      </div>
-      <input
-        type="range"
-        id="amountSlider"
-        min="0"
-        max="${maxAmt}"
-        step="${stepAmt}"
-        value="${filterMinAmount}"
-      />
-      <div class="amount-slider-value" id="amountSliderLabel">
-        ≥ ${amountShort(filterMinAmount)}
-      </div>
-    </div>
-  `;
-
-    const slider = document.getElementById("amountSlider");
-    if (slider) {
-      slider.addEventListener("input", e => {
-        filterMinAmount = Number(e.target.value);
-        const label = document.getElementById("amountSliderLabel");
-        if (label) label.textContent = "≥ " + amountShort(filterMinAmount);
-        hoveredName = null;
-        applyFilterToMap();
-        pauseAutoRotate();
-      });
-    }
-
-    return;
-  }
-
-  const values = getFilterOptions(filterType);
-
-  const select = document.createElement("select");
-  select.id = "filterValueSelect";
-
-  const allOpt = document.createElement("option");
-  allOpt.value = "ALL";
-  allOpt.textContent = FILTER_LABELS[filterType] || "Toutes les valeurs";
-  select.appendChild(allOpt);
-
-  values.forEach(item => {
-    const opt = document.createElement("option");
-    opt.value = item.name;
-    opt.textContent = `${item.name} (${item.count_rows})`;
-    select.appendChild(opt);
-  });
-
-  const validValues = values.map(v => v.name);
-  select.value = validValues.includes(filterValue) ? filterValue : "ALL";
-  filterValue = select.value;
-
-  wrapper.innerHTML = "";
-  wrapper.appendChild(select);
-
-  select.addEventListener("change", e => {
-    filterValue = e.target.value;
-    hoveredName = null;
-    applyFilterToMap();
-    pauseAutoRotate();
-  });
-}
-
-// ─── Colors ───────────────────────────────────────────────────────────────────
 
 function computeAmountBreaks(values) {
   const arr = values.filter(v => v > 0).sort((a, b) => a - b);
@@ -304,18 +238,11 @@ function getAmountColor(v) {
   return palette[5];
 }
 
-function getResponsableColor(v) {
-  if (!v || v <= 0) return [185, 205, 225, 110];
-  return [49, 130, 189, 220];
-}
-
 function getFillColor(props) {
   const isHovered = hoveredName && props.country_name === hoveredName;
   let color;
 
-  if (filterType === "responsible" && filterValue !== "ALL") {
-    color = getResponsableColor(Number(props.nb_projets || 0));
-  } else if (mode === "projects") {
+  if (mode === "projects") {
     color = getProjectColor(Number(props.nb_projets || 0));
   } else {
     color = getAmountColor(Number(props.somme_argent || 0));
@@ -332,12 +259,6 @@ function getFillColor(props) {
 
   return color;
 }
-
-function getElevation(v) {
-  return !v || v < 1 ? 0 : 5000;
-}
-
-// ─── Earth background layer ───────────────────────────────────────────────────
 
 function makeEarthLayer() {
   return new GeoJsonLayer({
@@ -368,69 +289,60 @@ function makeEarthLayer() {
   });
 }
 
-// ─── Countries fill layer ─────────────────────────────────────────────────────
-
 function makeCountriesFillLayer() {
   return new GeoJsonLayer({
     id: "countries-fill",
-    data: { type: "FeatureCollection", features: geoFeatures },
+    data: countriesFeatureCollection,
     filled: true,
     stroked: false,
-    extruded: true,
+    extruded: false,
     wireframe: false,
     pickable: true,
     autoHighlight: false,
     getFillColor: f => getFillColor(f.properties),
-    getElevation: f => getElevation(
-      mode === "projects"
-        ? Number(f.properties.nb_projets || 0)
-        : Number(f.properties.somme_argent || 0) > 0 ? 1 : 0
-    ),
-    elevationScale: 5,
-    material: {
-      ambient: 0.9,
-      diffuse: 0.3,
-      shininess: 80,
-      specularColor: [180, 200, 220]
-    },
     parameters: { depthTest: true, cullFace: "back" },
     updateTriggers: {
       getFillColor: [
         mode,
         hoveredName,
-        filterType,
-        filterValue,
-        filterMinAmount,
+        activeFilters.funder,
+        activeFilters.responsible,
+        activeFilters.filiale,
+        activeFilters.sector,
+        activeFilters.expert,
+        activeFilters.minAmount,
         amountBreaks.join("-")
-      ],
-      getElevation: [mode, filterType, filterValue, filterMinAmount]
+      ]
     },
     onHover: info => {
-      hoveredName = info.object ? info.object.properties.country_name : null;
+      const newHovered = info.object ? info.object.properties.country_name : null;
+      if (newHovered !== hoveredName) {
+        hoveredName = newHovered;
+        refreshMap();
+      }
       updateTooltip(info);
-      if (deckgl) deckgl.setProps({ layers: getLayers() });
     }
   });
 }
 
-// ─── Countries border layer ───────────────────────────────────────────────────
-
 function makeCountriesBorderLayer() {
   return new GeoJsonLayer({
     id: "countries-border",
-    data: { type: "FeatureCollection", features: geoFeatures },
+    data: countriesFeatureCollection,
     filled: false,
     stroked: true,
     extruded: false,
     pickable: false,
     getLineColor: f => {
       const isHovered = hoveredName && f.properties.country_name === hoveredName;
-      return isHovered ? [255, 255, 255, 255] : [255, 255, 255, 160];
+      return isHovered ? [255, 255, 255, 255] : [255, 255, 255, 110];
     },
-    getLineWidth: f =>
-      hoveredName && f.properties.country_name === hoveredName ? 1 : 0,
+    getLineWidth: f => {
+      const isHovered = hoveredName && f.properties.country_name === hoveredName;
+      return isHovered ? 1.2 : 0.35;
+    },
     lineWidthUnits: "pixels",
-    lineWidthMinPixels: 0.5,
+    lineWidthMinPixels: 0.35,
     parameters: { depthTest: false, cullFace: "back" },
     updateTriggers: {
       getLineColor: [hoveredName],
@@ -439,52 +351,30 @@ function makeCountriesBorderLayer() {
   });
 }
 
-// ─── Office locations layer ───────────────────────────────────────────────────
-
 function makeOfficesLayer() {
-  const pulse = 0.5 + 0.5 * Math.sin(pulsePhase);
-  const haloRadius = 80000 + pulse * 60000;
-  const haloOpacity = Math.round(40 + pulse * 80);
-
-  return [
-    new ScatterplotLayer({
-      id: "offices-halo",
-      data: OFFICE_LOCATIONS,
-      getPosition: d => d.coordinates,
-      getRadius: haloRadius,
-      getFillColor: [255, 60, 60, haloOpacity],
-      stroked: false,
-      pickable: false,
-      parameters: { depthTest: false, depthMask: false }
-    }),
-    new ScatterplotLayer({
-      id: "offices-dot",
-      data: OFFICE_LOCATIONS,
-      getPosition: d => d.coordinates,
-      getRadius: 35000,
-      getFillColor: [220, 50, 50, 255],
-      stroked: true,
-      getLineColor: [255, 200, 200, 200],
-      getLineWidth: 0,
-      lineWidthUnits: "pixels",
-      pickable: false,
-      parameters: { depthTest: false, depthMask: false }
-    })
-  ];
+  return new ScatterplotLayer({
+    id: "offices-dot",
+    data: OFFICE_LOCATIONS,
+    getPosition: d => d.coordinates,
+    getRadius: 35000,
+    getFillColor: [220, 50, 50, 235],
+    stroked: true,
+    getLineColor: [255, 200, 200, 180],
+    getLineWidth: 1,
+    lineWidthUnits: "pixels",
+    pickable: false,
+    parameters: { depthTest: false, depthMask: false }
+  });
 }
-
-// ─── Layers helper ────────────────────────────────────────────────────────────
 
 function getLayers() {
   return [
     makeEarthLayer(),
     makeCountriesFillLayer(),
     makeCountriesBorderLayer(),
-    ...makeOfficesLayer()
+    makeOfficesLayer()
   ];
 }
-
-// ─── Halo ─────────────────────────────────────────────────────────────────────
 
 function updateHalo() {
   const container = document.getElementById("container");
@@ -503,12 +393,10 @@ function updateHalo() {
   const cx = w / 2;
   const cy = h / 2;
 
-  // halo plus serré autour du globe
   const zoomFactor = Math.pow(2, currentViewState.zoom - 1);
   const radius = Math.min(w, h) * 0.30 * zoomFactor;
 
   const grad = ctx.createRadialGradient(cx, cy, radius * 0.72, cx, cy, radius);
-
   grad.addColorStop(0.00, "rgba(120, 190, 255, 0.00)");
   grad.addColorStop(0.55, "rgba(120, 190, 255, 0.00)");
   grad.addColorStop(0.72, "rgba(120, 190, 255, 0.03)");
@@ -521,29 +409,12 @@ function updateHalo() {
   ctx.fillRect(0, 0, w, h);
 }
 
-// ─── Legend ───────────────────────────────────────────────────────────────────
-
 function updateLegend() {
   const title = document.getElementById("legendTitle");
   const box = document.getElementById("legendItems");
   if (!title || !box) return;
 
   box.innerHTML = "";
-
-  if (filterType === "responsible" && filterValue !== "ALL") {
-    title.textContent = "";
-    const items = [{ label: "Pays d'expérience", color: [49, 130, 189, 220] }];
-    items.forEach(({ label, color }) => {
-      const row = document.createElement("div");
-      row.className = "legend-row";
-      row.innerHTML = `
-        <div class="legend-swatch" style="background:rgba(${color[0]},${color[1]},${color[2]},${color[3] / 255});"></div>
-        <div>${label}</div>`;
-      box.appendChild(row);
-    });
-    return;
-  }
-
   const palette = getActivePalette();
 
   if (mode === "projects") {
@@ -553,7 +424,8 @@ function updateLegend() {
       row.className = "legend-row";
       row.innerHTML = `
         <div class="legend-swatch" style="background:rgba(${c.color[0]},${c.color[1]},${c.color[2]},${c.color[3] / 255});"></div>
-        <div>${c.label}</div>`;
+        <div>${c.label}</div>
+      `;
       box.appendChild(row);
     });
   } else {
@@ -566,18 +438,18 @@ function updateLegend() {
       `≤ ${amountShort(amountBreaks[3])}`,
       `> ${amountShort(amountBreaks[3])}`
     ];
+
     palette.amount.forEach((c, i) => {
       const row = document.createElement("div");
       row.className = "legend-row";
       row.innerHTML = `
         <div class="legend-swatch" style="background:rgba(${c[0]},${c[1]},${c[2]},${c[3] / 255});"></div>
-        <div>${labels[i]}</div>`;
+        <div>${labels[i]}</div>
+      `;
       box.appendChild(row);
     });
   }
 }
-
-// ─── Stats ────────────────────────────────────────────────────────────────────
 
 function updateStatsCards(filteredProjects, features) {
   const coveredCountries = features.filter(
@@ -590,13 +462,35 @@ function updateStatsCards(filteredProjects, features) {
     0
   );
 
-  document.getElementById("stat-countries").textContent = numberFmt(coveredCountries);
-  document.getElementById("stat-projects").textContent = numberFmt(totalProjects);
-  document.getElementById("stat-amount").textContent =
-    Math.round(totalAmount / 1000000).toLocaleString("fr-FR") + " M €";
+  const countriesEl = document.getElementById("stat-countries");
+  const projectsEl = document.getElementById("stat-projects");
+  const amountEl = document.getElementById("stat-amount");
+
+  if (countriesEl) countriesEl.textContent = numberFmt(coveredCountries);
+  if (projectsEl) projectsEl.textContent = numberFmt(totalProjects);
+  if (amountEl) amountEl.textContent = amountShort(totalAmount).replace(" EUR", " €");
 }
 
-// ─── Tooltip ──────────────────────────────────────────────────────────────────
+function updateActiveFiltersUI() {
+  const box = document.getElementById("activeFiltersContent");
+  if (!box) return;
+
+  const chips = [];
+
+  if (activeFilters.funder !== "ALL") chips.push(`Bailleur : ${activeFilters.funder}`);
+  if (activeFilters.responsible !== "ALL") chips.push(`Responsable : ${activeFilters.responsible}`);
+  if (activeFilters.filiale !== "ALL") chips.push(`Filiale : ${activeFilters.filiale}`);
+  if (activeFilters.sector !== "ALL") chips.push(`Secteur : ${activeFilters.sector}`);
+  if (activeFilters.expert !== "ALL") chips.push(`Expert : ${activeFilters.expert}`);
+  if (activeFilters.minAmount > 0) chips.push(`Montant ≥ ${amountShort(activeFilters.minAmount)}`);
+
+  if (!chips.length) {
+    box.textContent = "Aucun filtre";
+    return;
+  }
+
+  box.innerHTML = chips.map(txt => `<span class="filter-chip">${txt}</span>`).join("");
+}
 
 function updateTooltip(info) {
   const tooltip = document.getElementById("tooltip");
@@ -608,6 +502,7 @@ function updateTooltip(info) {
   }
 
   const props = info.object.properties;
+
   tooltip.innerHTML = `
     <div style="font-size:14px;font-weight:700;margin-bottom:6px;color:#ffffff;">
       ${props.country_name || "Pays"}
@@ -616,33 +511,33 @@ function updateTooltip(info) {
       <span style="color:#b9d8f5;">Nombre de projets :</span>
       <b style="color:#ffffff;">${numberFmt(props.nb_projets || 0)}</b><br/>
       <span style="color:#b9d8f5;">Montant cumulé :</span>
-      <b style="color:#ffffff;">${numberFmt(props.somme_argent || 0)} EUR</b>
-    </div>`;
+      <b style="color:#ffffff;">${numberFmt(Math.round(props.somme_argent || 0))} EUR</b>
+    </div>
+  `;
 
   tooltip.style.left = `${info.x + 16}px`;
   tooltip.style.top = `${info.y + 16}px`;
   tooltip.style.display = "block";
 }
 
-// ─── Apply filter to map ──────────────────────────────────────────────────────
-
 function applyFilterToMap() {
   const filteredProjects = getFilteredProjects();
   const statsByCountry = buildCountryStatsFromProjects(filteredProjects);
 
-  geoFeatures.forEach(f => {
+  for (const f of geoFeatures) {
     const key = f.properties.country_key;
     const stats = statsByCountry[key] || { nb_projets: 0, somme_argent: 0 };
 
     f.properties.nb_projets = Number(stats.nb_projets || 0);
     f.properties.somme_argent = Math.round(Number(stats.somme_argent || 0));
-  });
+  }
 
   amountBreaks = computeAmountBreaks(
     geoFeatures.map(f => Number(f.properties.somme_argent || 0))
   );
 
   updateStatsCards(filteredProjects, geoFeatures);
+  updateActiveFiltersUI();
   refreshMap();
 }
 
@@ -659,27 +554,17 @@ function refreshMap() {
   if (btnAmount) btnAmount.classList.toggle("active", mode === "amount");
 }
 
-// ─── Export visibilité ────────────────────────────────────────────────────────
-
-function updateExportVisibility() {
-  const exportPanel = document.getElementById("ui-export");
-  if (!exportPanel) return;
-
-  const hide = filterType === "amount" || (filterType === "responsible" && filterValue !== "ALL");
-  exportPanel.style.display = hide ? "none" : "block";
-}
-
-// ─── Auto-rotate ──────────────────────────────────────────────────────────────
-
 function pauseAutoRotate() {
   autoRotate = false;
   if (resumeRotateTimeout) clearTimeout(resumeRotateTimeout);
-  resumeRotateTimeout = setTimeout(() => { autoRotate = true; }, 1000);
+  resumeRotateTimeout = setTimeout(() => {
+    autoRotate = true;
+  }, 1200);
 }
 
 function animateRotation() {
   if (!deckgl) return;
-  pulsePhase += 0.04;
+
   updateHalo();
 
   if (autoRotate) {
@@ -687,13 +572,74 @@ function animateRotation() {
       ...currentViewState,
       longitude: currentViewState.longitude + 0.03
     };
+
+    deckgl.setProps({ viewState: currentViewState });
   }
 
-  deckgl.setProps({ viewState: currentViewState, layers: getLayers() });
   requestAnimationFrame(animateRotation);
 }
 
-// ─── Export PNG ───────────────────────────────────────────────────────────────
+function generateStars() {
+  const container = document.getElementById("stars-container");
+  if (!container) return;
+
+  const count = 220;
+
+  for (let i = 0; i < count; i++) {
+    const star = document.createElement("div");
+    star.className = "star";
+
+    const size = Math.random() < 0.8 ? 1 : Math.random() < 0.7 ? 1.5 : 2;
+    const x = Math.random() * 100;
+    const y = Math.random() * 100;
+    const dur = 2.5 + Math.random() * 5;
+    const del = Math.random() * 8;
+    const op = 0.4 + Math.random() * 0.6;
+
+    star.style.cssText = `
+      width:${size}px;
+      height:${size}px;
+      left:${x}%;
+      top:${y}%;
+      --duration:${dur}s;
+      --delay:${del}s;
+      --max-opacity:${op};
+    `;
+
+    container.appendChild(star);
+  }
+}
+
+function resetFilters() {
+  activeFilters = {
+    funder: "ALL",
+    responsible: "ALL",
+    filiale: "ALL",
+    sector: "ALL",
+    expert: "ALL",
+    minAmount: 0
+  };
+
+  const funder = document.getElementById("filterFunder");
+  const responsible = document.getElementById("filterResponsible");
+  const filiale = document.getElementById("filterFiliale");
+  const sector = document.getElementById("filterSector");
+  const expert = document.getElementById("filterExpert");
+  const amountSlider = document.getElementById("amountSlider");
+  const amountLabel = document.getElementById("amountSliderLabel");
+
+  if (funder) funder.value = "ALL";
+  if (responsible) responsible.value = "ALL";
+  if (filiale) filiale.value = "ALL";
+  if (sector) sector.value = "ALL";
+  if (expert) expert.value = "ALL";
+  if (amountSlider) amountSlider.value = 0;
+  if (amountLabel) amountLabel.textContent = "≥ 0 EUR";
+
+  hoveredName = null;
+  applyFilterToMap();
+  pauseAutoRotate();
+}
 
 function exportMapPNG() {
   const status = document.getElementById("exportStatus");
@@ -784,23 +730,17 @@ function exportMapPNG() {
     ctx.closePath();
   }
 
+  const titleParts = [];
+  if (activeFilters.funder !== "ALL") titleParts.push(`Bailleur: ${activeFilters.funder}`);
+  if (activeFilters.responsible !== "ALL") titleParts.push(`Responsable: ${activeFilters.responsible}`);
+  if (activeFilters.filiale !== "ALL") titleParts.push(`Filiale: ${activeFilters.filiale}`);
+  if (activeFilters.sector !== "ALL") titleParts.push(`Secteur: ${activeFilters.sector}`);
+  if (activeFilters.expert !== "ALL") titleParts.push(`Expert: ${activeFilters.expert}`);
+  if (activeFilters.minAmount > 0) titleParts.push(`Montant ≥ ${amountShort(activeFilters.minAmount)}`);
+
   let mapTitle = "Projets de Global Development";
-  if (filterType === "funder" && filterValue !== "ALL") {
-    mapTitle = `Projets avec ${filterValue}`;
-  } else if (filterType === "responsible" && filterValue !== "ALL") {
-    mapTitle = `Projets de ${filterValue}`;
-  } else if (filterType === "filiale" && filterValue === "Leader: Hydroconseil") {
-    mapTitle = "Projets de la filiale Hydroconseil";
-  } else if (filterType === "filiale" && filterValue === "Leader: Urbaconsulting") {
-    mapTitle = "Projets de la filiale Urbaconsulting";
-  } else if (filterType === "filiale" && filterValue === "Leader: Nexsom") {
-    mapTitle = "Projets de la filiale Nexsom";
-  } else if (filterType === "sector" && filterValue !== "ALL") {
-    mapTitle = `Projets secteur : ${filterValue}`;
-  } else if (filterType === "expert" && filterValue !== "ALL") {
-    mapTitle = `Projets de l'expert ${filterValue}`;
-  } else if (filterType === "amount" && filterMinAmount > 0) {
-    mapTitle = `Projets ≥ ${amountShort(filterMinAmount)}`;
+  if (titleParts.length) {
+    mapTitle = titleParts.join(" | ");
   }
 
   const COLOR_EMPTY = [208, 218, 228, 110];
@@ -808,10 +748,7 @@ function exportMapPNG() {
   function getExportFillColor(props) {
     let color;
 
-    if (filterType === "responsible" && filterValue !== "ALL") {
-      const v = Number(props.nb_projets || 0);
-      color = v <= 0 ? COLOR_EMPTY : [49, 130, 189, 220];
-    } else if (mode === "projects") {
+    if (mode === "projects") {
       const v = Number(props.nb_projets || 0);
       if (!v || v <= 0) color = COLOR_EMPTY;
       else if (v <= 1) color = getActivePalette().project[1].color;
@@ -852,7 +789,7 @@ function exportMapPNG() {
 
     ctx.fillStyle = `rgba(${color[0]},${color[1]},${color[2]},${(color[3] || 255) / 255})`;
     ctx.strokeStyle = isEmpty ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.55)";
-    ctx.lineWidth = isEmpty ? 1.5 : 0.4;
+    ctx.lineWidth = isEmpty ? 1.2 : 0.4;
 
     const geom = f.geometry;
     const polys = geom.type === "Polygon"
@@ -872,9 +809,15 @@ function exportMapPNG() {
             penDown = false;
             return;
           }
-          if (prevLon !== null && Math.abs(lon - prevLon) > 180) penDown = false;
+
+          if (prevLon !== null && Math.abs(lon - prevLon) > 180) {
+            penDown = false;
+          }
+
           const [x, y] = robinson(lon, lat);
-          penDown ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          if (penDown) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+
           penDown = true;
           prevLon = lon;
         });
@@ -893,21 +836,10 @@ function exportMapPNG() {
   ctx.textAlign = "center";
   ctx.fillText(mapTitle, centerX, TEXT_TOP + FS_T);
 
-  const legendTitle =
-    filterType === "responsible" && filterValue !== "ALL"
-      ? "Présence"
-      : mode === "projects"
-        ? "Nombre de projets"
-        : "Montant cumulé";
+  const legendTitle = mode === "projects" ? "Nombre de projets" : "Montant cumulé";
 
   let legendItems = [];
-
-  if (filterType === "responsible" && filterValue !== "ALL") {
-    legendItems = [
-      { label: "Aucun projet", color: COLOR_EMPTY },
-      { label: "≥ 1 projet", color: [49, 130, 189, 220] }
-    ];
-  } else if (mode === "projects") {
+  if (mode === "projects") {
     legendItems = [
       { label: "0", color: COLOR_EMPTY },
       ...getActivePalette().project.slice(1).map(c => ({ label: c.label, color: c.color }))
@@ -926,11 +858,14 @@ function exportMapPNG() {
     }));
   }
 
-  const SH = 13, SW = 20, SGAP = 5;
+  const SH = 13;
+  const SW = 20;
+  const SGAP = 5;
   const LEG_Y = TEXT_TOP + TITLE_H;
 
   ctx.font = `bold ${FS_L}px ${FONT}`;
   let totalLegW = ctx.measureText(legendTitle).width + 14;
+
   ctx.font = `${FS_S}px ${FONT}`;
   legendItems.forEach(({ label }) => {
     totalLegW += SW + SGAP + ctx.measureText(label).width + 14;
@@ -947,13 +882,17 @@ function exportMapPNG() {
   ctx.font = `${FS_S}px ${FONT}`;
   legendItems.forEach(({ label, color }) => {
     const top = LEG_Y + Math.round((FS_S - SH) / 2);
+
     ctx.fillStyle = `rgba(${color[0]},${color[1]},${color[2]},${(color[3] || 255) / 255})`;
     ctx.fillRect(lx, top, SW, SH);
+
     ctx.strokeStyle = "rgba(0,0,0,0.15)";
     ctx.lineWidth = 0.5;
     ctx.strokeRect(lx, top, SW, SH);
+
     ctx.fillStyle = "rgba(0,0,0,0.70)";
     ctx.fillText(label, lx + SW + SGAP, LEG_Y + FS_S);
+
     lx += SW + SGAP + ctx.measureText(label).width + 14;
   });
 
@@ -977,7 +916,7 @@ function exportMapPNG() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `projet_gd_${new Date().toISOString().slice(0, 10)}.png`;
+      link.download = `projet_gd_interne_${new Date().toISOString().slice(0, 10)}.png`;
       document.body.appendChild(link);
       link.click();
 
@@ -988,7 +927,9 @@ function exportMapPNG() {
 
       if (status) {
         status.textContent = "Exporté";
-        setTimeout(() => { status.style.display = "none"; }, 2500);
+        setTimeout(() => {
+          status.style.display = "none";
+        }, 2500);
       }
     }, "image/png");
   } catch (e) {
@@ -997,13 +938,18 @@ function exportMapPNG() {
   }
 }
 
-// ─── Event listeners ──────────────────────────────────────────────────────────
-
 document.addEventListener("DOMContentLoaded", () => {
   const btnProjects = document.getElementById("btnProjects");
   const btnAmount = document.getElementById("btnAmount");
-  const filterTypeSelect = document.getElementById("filterTypeSelect");
+  const btnResetFilters = document.getElementById("btnResetFilters");
   const btnExport = document.getElementById("btnExport");
+
+  const filterFunder = document.getElementById("filterFunder");
+  const filterResponsible = document.getElementById("filterResponsible");
+  const filterFiliale = document.getElementById("filterFiliale");
+  const filterSector = document.getElementById("filterSector");
+  const filterExpert = document.getElementById("filterExpert");
+  const amountSlider = document.getElementById("amountSlider");
 
   if (btnProjects) {
     btnProjects.addEventListener("click", () => {
@@ -1021,16 +967,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  if (filterTypeSelect) {
-    filterTypeSelect.addEventListener("change", e => {
-      filterType = e.target.value;
-      filterValue = "ALL";
-      filterMinAmount = 0;
-      hoveredName = null;
-      buildFilterValueUI();
-      applyFilterToMap();
-      pauseAutoRotate();
-      updateExportVisibility();
+  if (btnResetFilters) {
+    btnResetFilters.addEventListener("click", () => {
+      resetFilters();
     });
   }
 
@@ -1038,53 +977,91 @@ document.addEventListener("DOMContentLoaded", () => {
     btnExport.addEventListener("click", exportMapPNG);
   }
 
-  // ─── Stars ──────────────────────────────────────────────────────────────────
+  if (filterFunder) {
+    filterFunder.addEventListener("change", e => {
+      activeFilters.funder = e.target.value;
+      hoveredName = null;
+      applyFilterToMap();
+      pauseAutoRotate();
+    });
+  }
 
-  (function generateStars() {
-    const container = document.getElementById("stars-container");
-    if (!container) return;
-    const count = 220;
+  if (filterResponsible) {
+    filterResponsible.addEventListener("change", e => {
+      activeFilters.responsible = e.target.value;
+      hoveredName = null;
+      applyFilterToMap();
+      pauseAutoRotate();
+    });
+  }
 
-    for (let i = 0; i < count; i++) {
-      const star = document.createElement("div");
-      star.className = "star";
-      const size = Math.random() < 0.8 ? 1 : Math.random() < 0.7 ? 1.5 : 2;
-      const x = Math.random() * 100;
-      const y = Math.random() * 100;
-      const dur = 2.5 + Math.random() * 5;
-      const del = Math.random() * 8;
-      const op = 0.4 + Math.random() * 0.6;
+  if (filterFiliale) {
+    filterFiliale.addEventListener("change", e => {
+      activeFilters.filiale = e.target.value;
+      hoveredName = null;
+      applyFilterToMap();
+      pauseAutoRotate();
+    });
+  }
 
-      star.style.cssText = `
-        width:${size}px; height:${size}px;
-        left:${x}%; top:${y}%;
-        --duration:${dur}s; --delay:${del}s; --max-opacity:${op};
-      `;
+  if (filterSector) {
+    filterSector.addEventListener("change", e => {
+      activeFilters.sector = e.target.value;
+      hoveredName = null;
+      applyFilterToMap();
+      pauseAutoRotate();
+    });
+  }
 
-      container.appendChild(star);
-    }
-  })();
+  if (filterExpert) {
+    filterExpert.addEventListener("change", e => {
+      activeFilters.expert = e.target.value;
+      hoveredName = null;
+      applyFilterToMap();
+      pauseAutoRotate();
+    });
+  }
 
-  // ─── Load data ──────────────────────────────────────────────────────────────
+  if (amountSlider) {
+    amountSlider.addEventListener("input", e => {
+      activeFilters.minAmount = Number(e.target.value);
+
+      const label = document.getElementById("amountSliderLabel");
+      if (label) label.textContent = "≥ " + amountShort(activeFilters.minAmount);
+
+      clearTimeout(amountSliderTimer);
+      amountSliderTimer = setTimeout(() => {
+        hoveredName = null;
+        applyFilterToMap();
+        pauseAutoRotate();
+      }, 120);
+    });
+  }
+
+  generateStars();
 
   Promise.all([
     fetch(DATA_URL).then(r => {
-      if (!r.ok) throw new Error(`countries2.geojson introuvable (${r.status})`);
+      if (!r.ok) throw new Error(`countries_internal.geojson introuvable (${r.status})`);
       return r.json();
     }),
     fetch(PROJECTS_URL).then(r => {
-      if (!r.ok) throw new Error(`projects_site.json introuvable (${r.status})`);
+      if (!r.ok) throw new Error(`projects_internal.json introuvable (${r.status})`);
       return r.json();
     })
   ])
     .then(([geojson, projectsJson]) => {
-      geoFeatures = geojson.features || [];
+      geoFeatures = Array.isArray(geojson?.features) ? geojson.features : [];
+      countriesFeatureCollection = {
+        type: "FeatureCollection",
+        features: geoFeatures
+      };
+
       projectsData = projectsJson || null;
       projectsRows = Array.isArray(projectsJson?.projects) ? projectsJson.projects : [];
 
-      buildFilterValueUI();
-      applyFilterToMap();
-      updateExportVisibility();
+      populateFilterUI();
+      updateActiveFiltersUI();
 
       deckgl = new Deck({
         parent: document.getElementById("container"),
@@ -1094,6 +1071,7 @@ document.addEventListener("DOMContentLoaded", () => {
         layers: getLayers(),
         onViewStateChange: ({ viewState, interactionState }) => {
           currentViewState = { ...viewState };
+
           if (
             interactionState.isDragging ||
             interactionState.isZooming ||
@@ -1101,15 +1079,25 @@ document.addEventListener("DOMContentLoaded", () => {
           ) {
             pauseAutoRotate();
           }
-          if (deckgl) deckgl.setProps({ viewState: currentViewState });
+
+          if (deckgl) {
+            deckgl.setProps({ viewState: currentViewState });
+          }
         }
       });
 
+      applyFilterToMap();
       updateLegend();
+      updateHalo();
       animateRotation();
+
+      window.addEventListener("resize", () => {
+        updateHalo();
+      });
     })
     .catch(err => {
       console.error("Erreur chargement données :", err);
+
       ["stat-projects", "stat-countries", "stat-amount"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.textContent = "—";
